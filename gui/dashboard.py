@@ -7,9 +7,12 @@ from PyQt6.QtGui import QKeyEvent
 
 import numpy as np
 import os
-import mujoco
+try:
+    import mujoco
+except ImportError:
+    mujoco = None
 
-from simulator.sim_manager import SimulationManager
+from simulator.sim_manager import SimulationManager, QUADRUPED_PRESETS
 from gait_engine.gait_generator import GaitGenerator
 from analytics.stability import StabilityAnalyzer
 from analytics.energy import EnergyEstimator
@@ -129,7 +132,9 @@ class GaitStudioDashboard(QMainWindow):
         """)
         
         # Instantiate locomotion architecture subsystems
-        self.sim = SimulationManager(mode="mujoco", terrain_type="flat")
+        # Uses the default Custom configuration on startup
+        default_config = QUADRUPED_PRESETS["Custom (User-Defined)"]
+        self.sim = SimulationManager(mode="mujoco", terrain_type="flat", config=default_config)
         self.gait_gen = GaitGenerator(hip_positions=self.sim.hip_offsets)
         
         self.stability_analyzer = StabilityAnalyzer()
@@ -157,7 +162,6 @@ class GaitStudioDashboard(QMainWindow):
         
         # Key capture focus
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-
 
     def init_ui(self):
         # Main central widget
@@ -195,13 +199,40 @@ class GaitStudioDashboard(QMainWindow):
         
         main_layout.addLayout(header_layout)
         
-        # Horizontal layout: Controls (Left) vs Plots (Right)
+        # Horizontal layout: Left Tab Control Panel vs Right Plots Dashboard
         body_layout = QHBoxLayout()
         body_layout.setSpacing(15)
         
-        # --- LEFT SIDE: GAIT PARAMETERS & COMMANDS ---
-        controls_layout = QVBoxLayout()
-        controls_layout.setSpacing(10)
+        # --- LEFT SIDE: TAB CONTEXT (CONTROL vs HARDWARE) ---
+        self.tabs = QTabWidget()
+        self.tabs.setFixedWidth(280)
+        self.tabs.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.tabs.setStyleSheet("""
+            QTabWidget::pane {
+                border: 1px solid #2f3036;
+                background-color: #16171a;
+                border-radius: 6px;
+            }
+            QTabBar::tab {
+                background: #1a1b1f;
+                border: 1px solid #2f3036;
+                padding: 6px 12px;
+                font-size: 10px;
+                font-weight: bold;
+                color: #7a7c85;
+            }
+            QTabBar::tab:selected {
+                background: #232429;
+                color: #ffffff;
+                border-bottom-color: #232429;
+            }
+        """)
+        
+        # TAB 1 Layout: Locomotion & Teleoperation Controls
+        tab_loco_widget = QWidget()
+        tab_loco_layout = QVBoxLayout(tab_loco_widget)
+        tab_loco_layout.setContentsMargins(5, 5, 5, 5)
+        tab_loco_layout.setSpacing(10)
         
         # Group 1: Preset selectors
         grp_presets = QGroupBox("Locomotion Presets")
@@ -220,15 +251,13 @@ class GaitStudioDashboard(QMainWindow):
         env_label.setStyleSheet("color: #39ff14; font-weight: bold;")
         presets_grid.addWidget(env_label, 1, 1)
         
-        controls_layout.addWidget(grp_presets)
+        tab_loco_layout.addWidget(grp_presets)
         
         # Group 2: Locomotion Parameters
         grp_params = QGroupBox("Gait Parameters")
         params_grid = QGridLayout(grp_params)
         params_grid.setSpacing(6)
         
-        # Parameter sliders
-        # (label, slider_attr, min_val, max_val, default_val, scale)
         slider_configs = [
             ("Stride X (Forward)", "stride_x", -15, 15, 0, 100.0), # -0.15m to 0.15m
             ("Stride Y (Lateral)", "stride_y", -8, 8, 0, 100.0),   # -0.08m to 0.08m
@@ -253,9 +282,9 @@ class GaitStudioDashboard(QMainWindow):
             self.sliders[attr] = slider
             self.slider_labels[attr] = lbl_widget
             
-        controls_layout.addWidget(grp_params)
+        tab_loco_layout.addWidget(grp_params)
         
-        # Group 3: Attitude Offsets
+        # Group 3: Torso Attitude Offsets
         grp_attitude = QGroupBox("Torso Attitude Offsets")
         attitude_grid = QGridLayout(grp_attitude)
         attitude_grid.setSpacing(6)
@@ -281,9 +310,9 @@ class GaitStudioDashboard(QMainWindow):
             self.sliders[attr] = slider
             self.slider_labels[attr] = lbl_widget
             
-        controls_layout.addWidget(grp_attitude)
+        tab_loco_layout.addWidget(grp_attitude)
         
-        # Group 4: Recording Subsystem Controls
+        # Group 4: Recording Subsystem
         grp_recording = QGroupBox("Locomotion Logging")
         rec_layout = QVBoxLayout(grp_recording)
         rec_layout.setSpacing(8)
@@ -304,7 +333,6 @@ class GaitStudioDashboard(QMainWindow):
         rec_btns.addWidget(self.btn_stop)
         rec_layout.addLayout(rec_btns)
         
-        # Playback section
         playback_layout = QHBoxLayout()
         self.combo_format = QComboBox()
         self.combo_format.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -318,14 +346,66 @@ class GaitStudioDashboard(QMainWindow):
         playback_layout.addWidget(self.btn_replay)
         rec_layout.addLayout(playback_layout)
         
-        controls_layout.addWidget(grp_recording)
+        tab_loco_layout.addWidget(grp_recording)
+        tab_loco_layout.addStretch()
         
-        # Set controls width
-        controls_container = QWidget()
-        controls_container.setLayout(controls_layout)
-        controls_container.setFixedWidth(280)
+        self.tabs.addTab(tab_loco_widget, "CONTROL")
         
-        body_layout.addWidget(controls_container)
+        # TAB 2 Layout: Physical Hardware & presets
+        tab_hw_widget = QWidget()
+        tab_hw_layout = QVBoxLayout(tab_hw_widget)
+        tab_hw_layout.setContentsMargins(5, 5, 5, 5)
+        tab_hw_layout.setSpacing(10)
+        
+        # Group: Hardware Presets selector
+        grp_hw_presets = QGroupBox("Hardware Presets")
+        hw_presets_layout = QVBoxLayout(grp_hw_presets)
+        
+        self.combo_robot = QComboBox()
+        self.combo_robot.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.combo_robot.addItems(list(QUADRUPED_PRESETS.keys()))
+        self.combo_robot.setCurrentText("Custom (User-Defined)")
+        self.combo_robot.currentTextChanged.connect(self.on_robot_preset_changed)
+        hw_presets_layout.addWidget(self.combo_robot)
+        tab_hw_layout.addWidget(grp_hw_presets)
+        
+        # Group: Physical dimensions
+        grp_dims = QGroupBox("Link & Torso Dimensions")
+        dims_grid = QGridLayout(grp_dims)
+        dims_grid.setSpacing(6)
+        
+        self.spin_base_mass = self.create_spinbox(1.0, 50.0, 10.0, dims_grid, "Torso Mass (kg):", 0)
+        self.spin_hip_l = self.create_spinbox(0.01, 0.30, 0.06, dims_grid, "Hip Link (m):", 1)
+        self.spin_thigh_l = self.create_spinbox(0.05, 0.60, 0.22, dims_grid, "Thigh Link (m):", 2)
+        self.spin_calf_l = self.create_spinbox(0.05, 0.60, 0.22, dims_grid, "Calf Link (m):", 3)
+        self.spin_base_length = self.create_spinbox(0.10, 1.20, 0.45, dims_grid, "Torso Length (m):", 4)
+        self.spin_base_width = self.create_spinbox(0.05, 0.80, 0.20, dims_grid, "Torso Width (m):", 5)
+        
+        tab_hw_layout.addWidget(grp_dims)
+        
+        # Group: Actuator Configuration
+        grp_elec = QGroupBox("Actuator Electrical Specs")
+        elec_grid = QGridLayout(grp_elec)
+        elec_grid.setSpacing(6)
+        
+        self.spin_gear = self.create_spinbox(1.0, 50.0, 10.0, elec_grid, "Gear Reduction:", 0)
+        self.spin_kt = self.create_spinbox(0.01, 2.0, 0.18, elec_grid, "Torque Const (Kt):", 1)
+        self.spin_r_coil = self.create_spinbox(0.01, 5.0, 0.20, elec_grid, "Coil Resist (R):", 2)
+        self.spin_kp = self.create_spinbox(50.0, 2000.0, 500.0, elec_grid, "Joint Stiffness (Kp):", 3)
+        
+        tab_hw_layout.addWidget(grp_elec)
+        
+        # Re-initialize Apply Button
+        self.btn_apply_hw = QPushButton("APPLY HARDWARE CONFIG")
+        self.btn_apply_hw.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_apply_hw.setStyleSheet("background-color: #4a2b91; border-color: #6a3bbb;")
+        self.btn_apply_hw.clicked.connect(self.apply_custom_hardware_config)
+        tab_hw_layout.addWidget(self.btn_apply_hw)
+        
+        tab_hw_layout.addStretch()
+        self.tabs.addTab(tab_hw_widget, "HARDWARE")
+        
+        body_layout.addWidget(self.tabs)
         
         # --- RIGHT SIDE: TELEMETRY PLOTS & REAL-TIME DIAGRAMS ---
         right_layout = QVBoxLayout()
@@ -352,7 +432,6 @@ class GaitStudioDashboard(QMainWindow):
         right_layout.addWidget(grp_plots)
         
         body_layout.addLayout(right_layout)
-        
         main_layout.addLayout(body_layout)
         
         # Teleoperation instructions at footer
@@ -360,13 +439,32 @@ class GaitStudioDashboard(QMainWindow):
         footer_label.setStyleSheet("color: #7a7c85; font-size: 10px; font-weight: bold; letter-spacing: 0.5px;")
         main_layout.addWidget(footer_label)
 
+    def create_spinbox(self, min_val, max_val, default_val, layout, label_text, row):
+        """
+        Creates styled spinboxes for numeric hardware adjustment.
+        """
+        layout.addWidget(QLabel(label_text), row, 0)
+        spin = QDoubleSpinBox()
+        spin.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        spin.setRange(min_val, max_val)
+        spin.setSingleStep(0.01 if max_val <= 5.0 else 10.0)
+        spin.setValue(default_val)
+        spin.setStyleSheet("""
+            QDoubleSpinBox {
+                background-color: #232429;
+                border: 1px solid #2f3036;
+                color: #ffffff;
+                padding: 3px;
+                border-radius: 4px;
+                font-family: Consolas;
+            }
+        """)
+        layout.addWidget(spin, row, 1)
+        return spin
+
     def on_slider_changed(self, attr, scale, label_widget, display_name, val):
         scaled_val = val / scale
-        
-        # Update Gait Generator or Local value
         setattr(self.gait_gen, attr, scaled_val)
-        
-        # Update label
         if "rad" in label_widget.text() or "offset" in attr:
             label_widget.setText(f"{display_name}: {scaled_val:.2f} rad")
         else:
@@ -375,9 +473,6 @@ class GaitStudioDashboard(QMainWindow):
     def change_gait_pattern(self, name):
         self.gait_gen.set_gait(name.lower())
         print(f"[+] Gait changed to: {name.upper()}")
-        
-        # Update Stance Width or nominal settings if needed
-        # We can dynamically reset/adjust sliders if gait is walking (slower frequency, larger duty factor)
         if name.lower() == "walk":
             self.sliders["frequency"].setValue(10) # 1.0 Hz
             self.sliders["step_height"].setValue(4) # 0.04m step height
@@ -385,25 +480,94 @@ class GaitStudioDashboard(QMainWindow):
             self.sliders["frequency"].setValue(15) # 1.5 Hz
             self.sliders["step_height"].setValue(6) # 0.06m step height
 
-
-
-    def change_simulation_backend(self, idx):
-        # Toggle between MuJoCo and Standalone
-        mode_key = "mujoco" if idx == 0 else "standalone"
+    def on_robot_preset_changed(self, preset_name):
+        """
+        Fills out double-spin inputs when preset is triggered.
+        """
+        config = QUADRUPED_PRESETS[preset_name]
         
-        # Close old simulator
+        self.spin_base_mass.setValue(config["base_mass"])
+        self.spin_hip_l.setValue(config["hip_l"])
+        self.spin_thigh_l.setValue(config["thigh_l"])
+        self.spin_calf_l.setValue(config["calf_l"])
+        self.spin_base_length.setValue(config["base_dim"][0])
+        self.spin_base_width.setValue(config["base_dim"][1])
+        
+        self.spin_gear.setValue(config["gear_ratio"])
+        self.spin_kt.setValue(config["k_t"])
+        self.spin_r_coil.setValue(config["r_coil"])
+        self.spin_kp.setValue(config["kp_joint"])
+        
+        if preset_name != "Custom (User-Defined)":
+            self.apply_custom_hardware_config()
+
+    def apply_custom_hardware_config(self):
+        """
+        Recompiles physics environment dynamically with active numeric spinbox values.
+        """
+        config = {
+            "base_mass": self.spin_base_mass.value(),
+            "base_dim": [self.spin_base_length.value(), self.spin_base_width.value(), 0.10],
+            "hip_l": self.spin_hip_l.value(),
+            "thigh_l": self.spin_thigh_l.value(),
+            "calf_l": self.spin_calf_l.value(),
+            "gear_ratio": self.spin_gear.value(),
+            "k_t": self.spin_kt.value(),
+            "r_coil": self.spin_r_coil.value(),
+            "kp_joint": self.spin_kp.value()
+        }
+        
+        print("[+] Commencing customized quadruped hardware synthesis...")
+        
+        # 1. Close current session
         self.sim.close()
         
-        # Start new simulator (flat ground only)
-        self.sim = SimulationManager(mode=mode_key, terrain_type="flat")
-        self.gait_gen.hip_positions = self.sim.hip_offsets
+        # 2. Rebuild physics with the requested specs
+        mode_idx = self.combo_mode.currentIndex()
+        mode_key = "mujoco" if mode_idx == 0 else "standalone"
+        self.sim = SimulationManager(mode=mode_key, terrain_type="flat", config=config)
         
-        # Deep state resets to prevent startup control shocks
+        # 3. Align kinematics frames
+        self.gait_gen.hip_positions = self.sim.hip_offsets
+        self.gait_gen.body_height = config["thigh_l"] + config["calf_l"] * 0.8
+        self.sliders["body_height"].setValue(int(self.gait_gen.body_height * 100))
+        
+        # 4. Synchronize hardware analyzer parameters
+        self.energy_estimator.gear_ratio = config["gear_ratio"]
+        self.energy_estimator.k_t = config["k_t"]
+        self.energy_estimator.r_coil = config["r_coil"]
+        
+        # 5. Reset analysis streams
         self.gait_gen.reset()
         self.metrics_tracker.reset()
         self.energy_estimator.reset()
         
-        # If playback is active, disable it
+        print("[+] Quadruped compiled and successfully instantiated.")
+
+    def change_simulation_backend(self, idx):
+        mode_key = "mujoco" if idx == 0 else "standalone"
+        self.sim.close()
+        
+        # Fetch current spinbox settings to keep the same hardware configuration
+        config = {
+            "base_mass": self.spin_base_mass.value(),
+            "base_dim": [self.spin_base_length.value(), self.spin_base_width.value(), 0.10],
+            "hip_l": self.spin_hip_l.value(),
+            "thigh_l": self.spin_thigh_l.value(),
+            "calf_l": self.spin_calf_l.value(),
+            "gear_ratio": self.spin_gear.value(),
+            "k_t": self.spin_kt.value(),
+            "r_coil": self.spin_r_coil.value(),
+            "kp_joint": self.spin_kp.value()
+        }
+        
+        self.sim = SimulationManager(mode=mode_key, terrain_type="flat", config=config)
+        self.gait_gen.hip_positions = self.sim.hip_offsets
+        
+        self.gait_gen.reset()
+        self.metrics_tracker.reset()
+        self.energy_estimator.reset()
+        
         if self.playback_mode:
             self.toggle_replay()
 
@@ -414,7 +578,6 @@ class GaitStudioDashboard(QMainWindow):
         self.btn_start.setText("RECORDING...")
 
     def stop_recording(self):
-        # Determine format
         fmt = "csv" if self.combo_format.currentIndex() == 0 else "json"
         filepath = self.recorder.stop_session(export_format=fmt)
         
@@ -432,7 +595,6 @@ class GaitStudioDashboard(QMainWindow):
             self.btn_replay.setStyleSheet("")
             print("[*] Replay terminated. Resuming live simulation.")
         else:
-            # File Dialog to select CSV file
             file_path, _ = QFileDialog.getOpenFileName(self, "Load Locomotion Trial Sheet", "recording/sessions", "CSV Sheets (*.csv)")
             if file_path:
                 ok = self.replayer.load_session(file_path)
@@ -446,25 +608,17 @@ class GaitStudioDashboard(QMainWindow):
     def run_simulation_step(self):
         """
         Executes one loop of the control dashboard.
-        In normal mode: updates master phase clock, solves IK, steps simulator, logs telemetry, updates GUI.
-        In playback mode: loads frame from replayer, updates joints in simulator directly, updates telemetry.
         """
-        # Process any pending keys from the MuJoCo viewer thread safely
         if hasattr(self.sim, 'pending_keys') and self.sim.pending_keys:
             keys_to_process = list(self.sim.pending_keys)
             self.sim.pending_keys.clear()
             
             glfw_to_qt = {
-                265: Qt.Key.Key_Up,
-                264: Qt.Key.Key_Down,
-                263: Qt.Key.Key_Left,
-                262: Qt.Key.Key_Right,
-                266: Qt.Key.Key_PageUp,
-                267: Qt.Key.Key_PageDown,
-                268: Qt.Key.Key_Home,
-                269: Qt.Key.Key_End,
-                260: Qt.Key.Key_Insert,
-                261: Qt.Key.Key_Delete,
+                265: Qt.Key.Key_Up, 264: Qt.Key.Key_Down,
+                263: Qt.Key.Key_Left, 262: Qt.Key.Key_Right,
+                266: Qt.Key.Key_PageUp, 267: Qt.Key.Key_PageDown,
+                268: Qt.Key.Key_Home, 269: Qt.Key.Key_End,
+                260: Qt.Key.Key_Insert, 261: Qt.Key.Key_Delete,
                 32: Qt.Key.Key_Space
             }
             
@@ -478,10 +632,9 @@ class GaitStudioDashboard(QMainWindow):
             # --- PLAYBACK MODE ---
             frame = self.replayer.get_next_frame()
             if frame is None:
-                self.toggle_replay() # End of file
+                self.toggle_replay()
                 return
                 
-            # Feed replayed joint states directly to simulator base and joints
             if self.sim.mode == "standalone":
                 self.sim.sa_base_pos = np.array([frame["base_x"], frame["base_y"], frame["base_z"]])
                 self.sim.sa_base_rpy = np.array([frame["roll"], frame["pitch"], frame["yaw"]])
@@ -527,6 +680,7 @@ class GaitStudioDashboard(QMainWindow):
                     self.sim.mj_viewer.sync()
             
             self.sim.sim_time = frame["time"]
+            com_xy = np.array([frame["base_x"], frame["base_y"]])
             stability_margin = frame["stability_margin"]
             safety_state = "stable" if stability_margin > 0.03 else ("warning" if stability_margin > 0.0 else "unstable")
             
@@ -545,7 +699,6 @@ class GaitStudioDashboard(QMainWindow):
             }
             contacts = {k: f > 0.1 for k, f in contact_forces.items()}
             
-            # Apply light smoothing during playback to clean up recorded noise
             alpha_filter = 0.15
             self.filtered_power_elec = alpha_filter * frame["electrical_power"] + (1.0 - alpha_filter) * self.filtered_power_elec
             self.filtered_power_mech = alpha_filter * frame["mechanical_power"] + (1.0 - alpha_filter) * self.filtered_power_mech
@@ -558,7 +711,6 @@ class GaitStudioDashboard(QMainWindow):
             # --- NORMAL SIMULATION MODE ---
             substeps = 4
             
-            # Temporary accumulators for substep averaging to resolve aliasing
             accum_stability_margin = 0.0
             accum_power_elec = 0.0
             accum_power_mech = 0.0
@@ -566,34 +718,24 @@ class GaitStudioDashboard(QMainWindow):
             accum_forces = {'FL': 0.0, 'FR': 0.0, 'RL': 0.0, 'RR': 0.0}
             accum_contacts = {'FL': 0.0, 'FR': 0.0, 'RL': 0.0, 'RR': 0.0}
             
-            # Trace support polygon for the last step in the sequence
             last_stability_info = None
             
             for _ in range(substeps):
-                # 1. Increment gait generator phase clock (240Hz)
                 self.gait_gen.update_phase(self.sim.dt)
-                
-                # 2. Compute 3D target coordinates for foot tips relative to hips
                 foot_targets = self.gait_gen.compute_foot_targets()
-                
-                # 3. Step simulator by 1 physics step of self.sim.dt (240Hz)
                 self.sim.step_single(foot_targets, self.gait_gen)
                 
-                # 4. Extract telemetry and run Locomotion Analytics at 240Hz
                 com_xy = self.sim.state['base_pos'][:2]
                 contacts = self.sim.state['foot_contacts']
                 contact_forces = self.sim.state['foot_forces']
                 
-                # Get body rotation matrix for slip estimator frame alignment
                 R_body = self.gait_gen.get_rotation_matrix(
                     self.sim.state['base_rpy'][0],
                     self.sim.state['base_rpy'][1],
                     self.sim.state['base_rpy'][2]
                 )
                 
-                # FIXED: Stability calculation in body-local coordinate frame.
-                # Projecting local relative foot targets keeps the support polygon 
-                # locked to the axis-aligned torso footprint, resolving yaw drift errors.
+                # Stability footprint evaluated in the body-local frame
                 foot_xy_contacts = {}
                 for leg in ['FL', 'FR', 'RL', 'RR']:
                     pos_local = self.sim.state['foot_positions_hip'][leg] + self.sim.hip_offsets[leg]
@@ -603,10 +745,8 @@ class GaitStudioDashboard(QMainWindow):
                 stability_info = self.stability_analyzer.compute_stability(com_local, foot_xy_contacts)
                 last_stability_info = stability_info
                 
-                # energy
                 power_info = self.energy_estimator.compute_power(self.sim.state['joint_tau'], self.sim.state['joint_dq'])
                 
-                # slip detector with proper world frame alignment
                 slips = {}
                 for leg in ['FL', 'FR', 'RL', 'RR']:
                     l_idx = ['FL', 'FR', 'RL', 'RR'].index(leg)
@@ -620,11 +760,9 @@ class GaitStudioDashboard(QMainWindow):
                     )
                     slips[leg] = slip_info['slip_velocity']
                     
-                # metrics tracker at 240Hz
                 self.metrics_tracker.update(contacts, [self.gait_gen.stride_x, self.gait_gen.stride_y, self.gait_gen.yaw_rate], self.sim.state['base_vel_lin'], self.sim.dt)
                 metrics = self.metrics_tracker.get_metrics()
                 
-                # Accumulate values
                 accum_stability_margin += stability_info['stability_margin']
                 accum_power_elec += power_info['electrical_power']
                 accum_power_mech += power_info['mechanical_power']
@@ -633,7 +771,6 @@ class GaitStudioDashboard(QMainWindow):
                     accum_forces[leg] += contact_forces[leg]
                     accum_contacts[leg] += 1.0 if contacts[leg] else 0.0
                 
-                # 5. Log step in session recorder at 240Hz
                 if self.recorder.is_recording:
                     self.recorder.log_step(
                         self.sim.sim_time, self.gait_gen, 
@@ -644,12 +781,10 @@ class GaitStudioDashboard(QMainWindow):
                         power_info['electrical_power'], power_info['mechanical_power'], slips
                     )
             
-            # Compute raw averages over the step window
             raw_power_elec = accum_power_elec / substeps
             raw_power_mech = accum_power_mech / substeps
             
-            # FIXED: Apply first-order low-pass filter (Exponential Moving Average) to the power signal
-            # to remove high-frequency physical impact noise.
+            # EMA Low-pass filters
             alpha_filter = 0.15
             self.filtered_power_elec = alpha_filter * raw_power_elec + (1.0 - alpha_filter) * self.filtered_power_elec
             self.filtered_power_mech = alpha_filter * raw_power_mech + (1.0 - alpha_filter) * self.filtered_power_mech
@@ -661,7 +796,7 @@ class GaitStudioDashboard(QMainWindow):
             symmetry_pct = accum_symmetry / substeps
             
             contact_forces = {k: v / substeps for k, v in accum_forces.items()}
-            contacts = {k: (v / substeps) > 0.5 for k, v in accum_contacts.items()} # Majority vote for logical state
+            contacts = {k: (v / substeps) > 0.5 for k, v in accum_contacts.items()}
             stability_info = last_stability_info
             stability_info['stability_margin'] = stability_margin
             stability_info['state'] = safety_state
@@ -671,70 +806,38 @@ class GaitStudioDashboard(QMainWindow):
         self.timeline_widget.update_states(contacts)
         self.plots_canvas.update_plots(np.array([0.0, 0.0]), stability_info, contact_forces, power_elec, power_mech, self.sim.dt)
 
-
     def keyPressEvent(self, event: QKeyEvent):
-        """
-        Keyboard teleoperation handler using arrow keys and auxiliary keys.
-        WASD keys are left free for MuJoCo's built-in camera controls.
-        
-        Arrow Up/Down    = Stride X (forward/backward)
-        Arrow Left/Right = Yaw turning (left/right)
-        Page Up/Down     = Stride Y (lateral left/right)
-        Home/End         = Attitude Roll
-        Insert/Delete    = Attitude Pitch
-        Space            = Emergency stop (zero all)
-        """
-        # --- Locomotion movement ---
         if event.key() == Qt.Key.Key_Up:
-            # Stride X forward
             val = self.sliders["stride_x"].value() + 1
             self.sliders["stride_x"].setValue(int(np.clip(val, -15, 15)))
         elif event.key() == Qt.Key.Key_Down:
-            # Stride X backward
             val = self.sliders["stride_x"].value() - 1
             self.sliders["stride_x"].setValue(int(np.clip(val, -15, 15)))
-            
         elif event.key() == Qt.Key.Key_Left:
-            # Yaw turn counter-clockwise (turn left)
             val = self.sliders["yaw_rate"].value() + 1
             self.sliders["yaw_rate"].setValue(int(np.clip(val, -5, 5)))
         elif event.key() == Qt.Key.Key_Right:
-            # Yaw turn clockwise (turn right)
             val = self.sliders["yaw_rate"].value() - 1
             self.sliders["yaw_rate"].setValue(int(np.clip(val, -5, 5)))
-            
-        # --- Lateral stride ---
         elif event.key() == Qt.Key.Key_PageUp:
-            # Stride Y left
             val = self.sliders["stride_y"].value() + 1
             self.sliders["stride_y"].setValue(int(np.clip(val, -8, 8)))
         elif event.key() == Qt.Key.Key_PageDown:
-            # Stride Y right
             val = self.sliders["stride_y"].value() - 1
             self.sliders["stride_y"].setValue(int(np.clip(val, -8, 8)))
-            
-        # --- Attitude controls ---
         elif event.key() == Qt.Key.Key_Home:
-            # Roll left
             val = self.sliders["roll_offset"].value() - 2
             self.sliders["roll_offset"].setValue(int(np.clip(val, -30, 30)))
         elif event.key() == Qt.Key.Key_End:
-            # Roll right
             val = self.sliders["roll_offset"].value() + 2
             self.sliders["roll_offset"].setValue(int(np.clip(val, -30, 30)))
-            
         elif event.key() == Qt.Key.Key_Insert:
-            # Pitch forward
             val = self.sliders["pitch_offset"].value() + 2
             self.sliders["pitch_offset"].setValue(int(np.clip(val, -30, 30)))
         elif event.key() == Qt.Key.Key_Delete:
-            # Pitch backward
             val = self.sliders["pitch_offset"].value() - 2
             self.sliders["pitch_offset"].setValue(int(np.clip(val, -30, 30)))
-            
-        # --- Emergency stop ---
         elif event.key() == Qt.Key.Key_Space:
-            # Stop all motion (brake)
             self.sliders["stride_x"].setValue(0)
             self.sliders["stride_y"].setValue(0)
             self.sliders["yaw_rate"].setValue(0)
@@ -742,17 +845,13 @@ class GaitStudioDashboard(QMainWindow):
             self.sliders["pitch_offset"].setValue(0)
             self.sliders["yaw_offset"].setValue(0)
             print("[*] E-Brake: Locomotion vectors zeroed.")
-            
         else:
-            # Bubble up standard key press events
             super().keyPressEvent(event)
 
     def closeEvent(self, event):
-        # Shut down simulator when closing window
         self.sim.close()
         event.accept()
 
     def mousePressEvent(self, event):
-        # Focus main window when clicked anywhere on the background
         self.setFocus()
         super().mousePressEvent(event)
