@@ -1,4 +1,4 @@
-# GaitStudio — Quadruped Locomotion Sandbox
+# GaitStudio — Quadruped Locomotion 
 
 A personal project I built to explore quadruped robot locomotion — procedural gait generation, analytical inverse kinematics, and real-time simulation in MuJoCo. The goal was to have a single environment where I could tweak gait parameters and immediately see the effect on the robot's motion and stability.
 
