@@ -142,38 +142,4 @@ python main.py
 
 ---
 
-## Advanced Mathematics & Control Details
 
-<details>
-<summary><b>View Analytical 3-DOF Inverse Kinematics Formula</b></summary>
-
-To solve the inverse kinematics of a 3-DOF leg (Abduction, Thigh, Calf) in microseconds, the solver uses an analytical formulation based on the geometric Law of Cosines:
-* **Abduction ($q_1$)**:
-  $$q_1 = \text{atan2}(z, y) - \text{atan2}(r, l_{\text{hip}})$$
-  where $r = -\sqrt{y^2 + z^2 - l_{\text{hip}}^2}$ represents the leg extension projection.
-* **Calf Knee ($q_3$)**:
-  $$\cos(q_3) = \frac{x_p^2 + z_p^2 - l_{\text{thigh}}^2 - l_{\text{calf}}^2}{2 \cdot l_{\text{thigh}} \cdot l_{\text{calf}}}$$
-  $$q_3 = -\arccos(\cos(q_3))$$
-* **Thigh Pitch ($q_2$)**:
-  $$q_2 = \text{atan2}(x_p, -z_p) - \text{atan2}(l_{\text{calf}} \sin(q_3), l_{\text{thigh}} + l_{\text{calf}} \cos(q_3))$$
-
-All calculations include workspace boundary projections to prevent math errors (`nan` values) and singularities.
-</details>
-
-<details>
-<summary><b>View Decoupled 240Hz Loop Design</b></summary>
-
-To match industrial robotic standards, GaitStudio decouples real-time controller updates from graphical interface rendering:
-* **High-Frequency Control Loop (240Hz)**: Handles coordinate phase updates, foot trajectories, closed-form analytical IK, physics stepping, and rolling metrics integration. It executes 4 times per PyQt6 update frame.
-* **GUI Telemetry Thread (60Hz)**: Polls the latest consolidated 240Hz state, paint-drawing the Gantt timeline widget, updating telemetry cards, and refreshing Matplotlib subplots smoothly.
-</details>
-
-<details>
-<summary><b>View Convex Hull Support Polygon Projection</b></summary>
-
-For a moving robot, world coordinate support polygons quickly drift out of view on visual charts. GaitStudio avoids this by projecting the CCW convex hull and COM projection into the robot's local frame:
-* Projected COM coordinates are locked at `[0.0, 0.0]`.
-* Active contact coordinates are offset by the current base translation:
-  $$\vec{p}_{\text{local}} = \vec{p}_{\text{world}} - \vec{p}_{\text{base}}$$
-* The dynamic safety margin is the minimum distance from `(0, 0)` to the polygon edges, calculated using segment projection vectors.
-</details>
