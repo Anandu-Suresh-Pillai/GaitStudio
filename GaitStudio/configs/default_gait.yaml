@@ -1,0 +1,42 @@
+# GaitStudio default gait parameters
+gait_profiles:
+  walk:
+    frequency: 1.0
+    step_height: 0.04
+    body_height: 0.28
+    duty_factor: 0.75
+    offsets:
+      FL: 0.0
+      FR: 0.5
+      RL: 0.75
+      RR: 0.25
+  trot:
+    frequency: 1.5
+    step_height: 0.06
+    body_height: 0.28
+    duty_factor: 0.50
+    offsets:
+      FL: 0.0
+      FR: 0.5
+      RL: 0.5
+      RR: 0.0
+  pace:
+    frequency: 1.5
+    step_height: 0.06
+    body_height: 0.28
+    duty_factor: 0.50
+    offsets:
+      FL: 0.0
+      FR: 0.5
+      RL: 0.0
+      RR: 0.5
+  bound:
+    frequency: 1.5
+    step_height: 0.06
+    body_height: 0.28
+    duty_factor: 0.50
+    offsets:
+      FL: 0.0
+      FR: 0.0
+      RL: 0.5
+      RR: 0.5
